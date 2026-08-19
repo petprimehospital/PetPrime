@@ -1842,6 +1842,11 @@ async function driveMakeFolder(name){
 }
 async function driveUpload(){
   needFolder();
+  /* กันเครื่องที่ยังไม่มีข้อมูลเผลอกดสำรอง แล้วไปทับ "ไฟล์ล่าสุด" ในโฟลเดอร์ด้วยไฟล์เปล่า
+     ซึ่งจะทำให้เครื่องที่มากู้ข้อมูลทีหลังดึงได้แต่ไฟล์ว่าง */
+  if (!load().length)
+    throw new Error('เครื่องนี้ยังไม่มีแผ่นบันทึก จึงไม่มีอะไรให้สำรอง — ' +
+                    'ถ้าต้องการข้อมูลจากเครื่องอื่น ให้กด “⬇ ดึงข้อมูลล่าสุด” แทน');
   const meta = { name:'vet-records-' + stampName() + '.json',
                  mimeType:'application/json', parents:[CFG.folderId] };
   const bd = 'vetrec' + Math.random().toString(36).slice(2);
@@ -1856,7 +1861,8 @@ async function driveUpload(){
   });
   return r.json();
 }
-async function driveNewest(){
+/* รายชื่อไฟล์สำรองในโฟลเดอร์ เรียงใหม่ไปเก่า */
+async function driveBackupFiles(){
   needFolder();
   const q = "'" + CFG.folderId + "' in parents and trashed = false";
   const url = API + '/files?q=' + encodeURIComponent(q) +
@@ -1864,12 +1870,16 @@ async function driveNewest(){
               '&pageSize=10&fields=' + encodeURIComponent('files(id,name,modifiedTime)') +
               '&supportsAllDrives=true&includeItemsFromAllDrives=true';
   const r = await dfetch(url);
-  const files = ((await r.json()).files || []).filter(f => /\.json$/i.test(f.name));
-  return files[0] || null;
+  return ((await r.json()).files || []).filter(f => /\.json$/i.test(f.name));
+}
+async function driveNewest(){
+  return (await driveBackupFiles())[0] || null;
 }
 async function driveGet(id){
   const r = await dfetch(API + '/files/' + encodeURIComponent(id) + '?alt=media&supportsAllDrives=true');
-  return r.json();
+  /* ไฟล์ในโฟลเดอร์อาจเป็นไฟล์อื่นที่ลงท้าย .json หรือไฟล์ที่เสีย — บอกให้รู้เรื่องดีกว่าโยน SyntaxError ดิบ */
+  try { return await r.json(); }
+  catch(e){ throw new Error('อ่านไฟล์นี้ไม่ได้ — เนื้อไฟล์เสีย หรือไม่ใช่ไฟล์สำรองของแอป'); }
 }
 
 /* ---- ปุ่มในแท็บประวัติ ---- */
@@ -1898,9 +1908,20 @@ function doDriveUp(){
 }
 function doDriveDown(){
   withBusy('btn-drive-down', 'กำลังดึงข้อมูล…', async () => {
-    const f = await driveNewest();
-    if (!f) throw new Error('ยังไม่มีไฟล์สำรองในโฟลเดอร์นี้');
-    const n = mergeIncoming(await driveGet(f.id));
+    const files = await driveBackupFiles();
+    if (!files.length) throw new Error('ยังไม่มีไฟล์สำรองในโฟลเดอร์นี้');
+    let f = files[0], data = await driveGet(f.id);
+    /* ไฟล์ล่าสุดไม่มีข้อมูลเลย — เกิดจากรุ่นเก่าที่ยังไม่มีตัวกันการสำรองไฟล์เปล่า
+       เสนอไฟล์ก่อนหน้าให้ แทนที่จะปล่อยให้กู้ข้อมูลไม่ได้ */
+    if (Array.isArray(data) && !data.length && files.length > 1){
+      const prev = files[1];
+      if (confirm('ไฟล์ล่าสุด “' + f.name + '” ไม่มีข้อมูลอยู่เลย\n\n' +
+                  'มักเกิดจากเครื่องที่ยังไม่มีข้อมูลเผลอกดสำรองขึ้น Drive\n\n' +
+                  'ต้องการดึงไฟล์ก่อนหน้า “' + prev.name + '” แทนไหม?')){
+        f = prev; data = await driveGet(f.id);
+      }
+    }
+    const n = mergeIncoming(data);
     toast('ดึงจาก ' + f.name + ' แล้ว — ' + mergeMsg(n));
   });
 }
