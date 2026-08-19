@@ -621,15 +621,11 @@ table.vals th:first-child,table.vals td:first-child{text-align:left;white-space:
 
     <div class="set-card">
       <h3>1. บัญชี Google</h3>
-      <p class="hint">ใช้ <b>บัญชีกลางบัญชีเดียว</b> สำหรับทุกเครื่องในโรงพยาบาล ทุกเครื่องจึงจะเห็นไฟล์สำรองชุดเดียวกัน
-        (เปลี่ยนบัญชีภายหลังได้ แต่ไฟล์ที่สำรองด้วยบัญชีเดิมจะไม่ปรากฏในบัญชีใหม่)</p>
       <div class="set-row">
         <label for="cfg-client">Client ID</label>
         <input type="text" id="cfg-client" autocomplete="off" spellcheck="false"
                placeholder="xxxxxxxxxx.apps.googleusercontent.com">
       </div>
-      <p class="hint">ได้จาก Google Cloud Console (ขั้นตอนอยู่ในไฟล์ docs/setup-google-drive.md) —
-        <b>Client ID ไม่ใช่ความลับ</b> ส่วน Client secret ไม่ต้องใส่ที่นี่และไม่ควรส่งให้ใคร</p>
       <div class="set-state" id="cfg-acct">ยังไม่ได้เชื่อมต่อ</div>
       <div class="set-row">
         <button class="btn primary" id="cfg-connect">เชื่อมต่อบัญชี Google</button>
@@ -650,11 +646,8 @@ table.vals th:first-child,table.vals td:first-child{text-align:left;white-space:
       <div class="set-state" id="cfg-fstate">ยังไม่ได้ทดสอบการเชื่อมต่อ</div>
       <div class="set-row">
         <button class="btn" id="cfg-test">ทดสอบการเชื่อมต่อ</button>
-        <button class="btn" id="cfg-mkfolder">ให้แอปสร้างโฟลเดอร์ใหม่</button>
+        <button class="btn" id="cfg-mkfolder">ใช้โฟลเดอร์ของแอป</button>
       </div>
-      <p class="hint">แอปขอสิทธิ์แบบจำกัด (drive.file) คือเห็นเฉพาะไฟล์ที่แอปนี้สร้างเท่านั้น
-        อ่านไฟล์อื่นในไดรฟ์ไม่ได้ ถ้าโฟลเดอร์ที่วางลิงก์ไว้ใช้ไม่ได้ ให้กด “ให้แอปสร้างโฟลเดอร์ใหม่”
-        แล้วนำลิงก์ที่ได้ไปแชร์ให้เครื่องอื่น</p>
     </div>
 
     <div class="set-card">
@@ -1826,6 +1819,19 @@ async function driveFolderInfo(id){
     '?supportsAllDrives=true&fields=' + encodeURIComponent('id,name,mimeType,webViewLink'));
   return r.json();
 }
+const APP_FOLDER = 'Vet Records (บันทึกการรักษา)';
+/* หาโฟลเดอร์ที่ "แอปนี้เคยสร้าง" ชื่อตรงกัน — สิทธิ์ drive.file ทำให้เห็นเฉพาะของแอปเองอยู่แล้ว
+   เรียงตามเวลาสร้าง เพื่อให้ทุกเครื่องเลือกอันเดียวกันเสมอถ้าเผลอสร้างซ้ำไว้ก่อนหน้านี้ */
+async function driveFindFolders(name){
+  const safeName = String(name).split('\\').join('\\\\').split("'").join("\\'");
+  const q = "mimeType = 'application/vnd.google-apps.folder' and trashed = false and name = '" + safeName + "'";
+  const url = API + '/files?q=' + encodeURIComponent(q) +
+              '&orderBy=' + encodeURIComponent('createdTime') +
+              '&pageSize=20&fields=' + encodeURIComponent('files(id,name,webViewLink,createdTime)') +
+              '&supportsAllDrives=true&includeItemsFromAllDrives=true';
+  const r = await dfetch(url);
+  return (await r.json()).files || [];
+}
 async function driveMakeFolder(name){
   const r = await dfetch(API + '/files?fields=' + encodeURIComponent('id,name,webViewLink'), {
     method:'POST',
@@ -1992,14 +1998,24 @@ function bindSettings(){
       'ให้กด “ให้แอปสร้างโฟลเดอร์ใหม่” แทน แล้วนำลิงก์ที่ได้ไปแชร์ให้เครื่องอื่น', 'bad'));
   };
   document.getElementById('cfg-mkfolder').onclick = () => {
-    if (!confirm('สร้างโฟลเดอร์ใหม่ชื่อ “Vet Records (บันทึกการรักษา)” ในไดรฟ์ของบัญชีที่เชื่อมต่ออยู่ ' +
-                 'แล้วตั้งเป็นโฟลเดอร์ปลายทางแทนของเดิม?')) return;
-    setState('cfg-fstate', 'กำลังสร้างโฟลเดอร์…', 'busy');
-    driveMakeFolder('Vet Records (บันทึกการรักษา)').then(f => {
-      CFG.folderId  = f.id;
-      CFG.folderUrl = f.webViewLink || ('https://drive.google.com/drive/folders/' + f.id);
+    if (!confirm('ใช้โฟลเดอร์ “' + APP_FOLDER + '” ในไดรฟ์ของบัญชีที่เชื่อมต่ออยู่ ' +
+                 'เป็นโฟลเดอร์ปลายทางแทนของเดิม?\n\n' +
+                 'ถ้ามีโฟลเดอร์นี้อยู่แล้วจะใช้อันเดิม จะสร้างใหม่ก็ต่อเมื่อยังไม่มีเท่านั้น')) return;
+    setState('cfg-fstate', 'กำลังหาโฟลเดอร์เดิม…', 'busy');
+    driveFindFolders(APP_FOLDER).then(found => {
+      if (found.length) return { f: found[0], made: false, dup: found.length };
+      setState('cfg-fstate', 'ไม่พบของเดิม — กำลังสร้างใหม่…', 'busy');
+      return driveMakeFolder(APP_FOLDER).then(f => ({ f, made: true, dup: 0 }));
+    }).then(res => {
+      CFG.folderId  = res.f.id;
+      CFG.folderUrl = res.f.webViewLink || ('https://drive.google.com/drive/folders/' + res.f.id);
       saveSettings(); renderSettings();
-      setState('cfg-fstate', 'สร้างแล้ว — คัดลอกลิงก์ในช่องด้านบนไปตั้งค่าที่เครื่องอื่นได้เลย', 'good');
+      setState('cfg-fstate', res.made
+        ? 'สร้างโฟลเดอร์ “' + res.f.name + '” แล้ว — คัดลอกลิงก์ในช่องด้านบนไปตั้งค่าที่เครื่องอื่นได้เลย'
+        : 'มีโฟลเดอร์ “' + res.f.name + '” อยู่แล้ว จึงใช้อันเดิม ไม่ได้สร้างซ้ำ' +
+          (res.dup > 1 ? ' — พบชื่อซ้ำกัน ' + res.dup + ' โฟลเดอร์ เลือกอันที่สร้างก่อนสุด ' +
+                         'ควรเข้าไปลบที่เหลือทิ้งใน Drive' : ''),
+        'good');
     }).catch(e => setState('cfg-fstate', e.message, 'bad'));
   };
 }
